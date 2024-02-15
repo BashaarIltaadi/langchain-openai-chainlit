@@ -1,8 +1,9 @@
-from langchain.embeddings.openai import OpenAIEmbeddings
+#from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.vectorstores import Chroma
+from langchain_community.vectorstores import Chroma
 from langchain.chains import RetrievalQAWithSourcesChain
-from langchain.chat_models import ChatOpenAI
+from langchain_community.chat_models import ChatOpenAI
 from langchain.prompts.chat import (
     ChatPromptTemplate,
     SystemMessagePromptTemplate,
@@ -17,7 +18,7 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-OPENAI_API_KEY= os.getenv("OPENAI_API_KEY")
+# OPENAI_API_KEY= os.getenv("OPENAI_API_KEY")
 
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
 
@@ -47,10 +48,7 @@ chain_type_kwargs = {"prompt": prompt}
 @cl.on_chat_start
 async def on_chat_start():
     # Sending an image with the local file path
-    elements = [
-    cl.Image(name="image1", display="inline", path="./robot.jpeg")
-    ]
-    await cl.Message(content="Hello there, Welcome to AskAnyQuery related to Data!", elements=elements).send()
+    await cl.Message(content="Hello there, Welcome to AskAnyQuery related to Data!",).send()
     files = None
 
     # Wait for the user to upload a file
@@ -63,13 +61,16 @@ async def on_chat_start():
         ).send()
 
     file = files[0]
-
+    
     msg = cl.Message(content=f"Processing `{file.name}`...")
     await msg.send()
 
     # Decode the file
-    text = file.content.decode("utf-8")
-
+    #text = file.content.decode("utf-8")
+    with open(file.path, "r", encoding="utf-8") as f:
+     text = f.read()
+    
+    print("[DEBUG] text type: ",type(text))
     # Split the text into chunks
     texts = text_splitter.split_text(text)
 
@@ -100,18 +101,23 @@ async def on_chat_start():
 
 
 @cl.on_message
-async def main(message):
+async def main(message: cl.Message):
+    print("[DEBUG] Initial message type:" ,type(message))
     chain = cl.user_session.get("chain")  # type: RetrievalQAWithSourcesChain
     cb = cl.AsyncLangchainCallbackHandler(
         stream_final_answer=True, answer_prefix_tokens=["FINAL", "ANSWER"]
     )
+    print("[DEBUG] Chain and CB handler executed.")
     cb.answer_reached = True
-    res = await chain.acall(message, callbacks=[cb])
-
+    message_content = message.content
+    res = await chain.ainvoke(message_content, callbacks=[cb])
+    print("[DEBUG] res variable created. ")
+    
     answer = res["answer"]
     sources = res["sources"].strip()
     source_elements = []
 
+    print("[DEBUG] Answer and Sources variables created. ")
     # Get the metadata and texts from the user session
     metadatas = cl.user_session.get("metadatas")
     all_sources = [m["source"] for m in metadatas]
@@ -143,3 +149,4 @@ async def main(message):
         await cb.final_stream.update()
     else:
         await cl.Message(content=answer, elements=source_elements).send()
+    print('Final message type:', type(message))

@@ -2,9 +2,9 @@
 
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.vectorstores import Chroma
+from langchain_community.vectorstores import Chroma
 from langchain.chains import RetrievalQAWithSourcesChain
-from langchain.chat_models import ChatOpenAI
+from langchain_community.chat_models import ChatOpenAI
 from langchain.prompts.chat import (
     ChatPromptTemplate,
     SystemMessagePromptTemplate,
@@ -22,7 +22,8 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-OPENAI_API_KEY= os.getenv("OPENAI_API_KEY")
+# Chainlit automatically loads the api keys.
+# OPENAI_API_KEY= os.getenv("OPENAI_API_KEY")
 
 
 # text_splitter and system template
@@ -58,58 +59,68 @@ chain_type_kwargs = {"prompt": prompt}
 async def on_chat_start():
 
     # Sending an image with the local file path
-    elements = [
-    cl.Image(name="image1", display="inline", path="./robot.jpeg")
-    ]
-    await cl.Message(content="Hello there, Welcome to AskAnyQuery related to Data!", elements=elements).send()
-    files = None
 
+    await cl.Message(content="Hello there, Welcome to AskAnyQuery related to Data!",).send()
+    files = None
+    print("[DEBUG] File None")
     # Wait for the user to upload a PDF file
     while files is None:
         files = await cl.AskFileMessage(
             content="Please upload a PDF file to begin!",
             accept=["application/pdf"],
-            max_size_mb=20,
+            max_size_mb=3,
             timeout=180,
         ).send()
 
     file = files[0]
-
+    print("[DEBUG] File Type: ",type(file))
+    print("[DEBUG] File Name: ", file.name)
     msg = cl.Message(content=f"Processing `{file.name}`...")
     await msg.send()
 
     # Read the PDF file
-    pdf_stream = BytesIO(file.content)
+    print("[DEBUG] Streaming PDF")
+    with open(file.path, "rb") as f:  # Open in read-binary mode
+        pdf_content = f.read()
+    pdf_stream = BytesIO(pdf_content)
+
+    print("[DEBUG] Converting into PDF")
     pdf = PyPDF2.PdfReader(pdf_stream)
+    print("[DEBUG] Extracting text")
     pdf_text = ""
     for page in pdf.pages:
         pdf_text += page.extract_text()
-
+    print("[DEBUG] PDF Text Extract:", len(pdf_text)) 
     # Split the text into chunks
+    print("[DEBUG] Splitting into chunks")
     texts = text_splitter.split_text(pdf_text)
 
     # Create metadata for each chunk
+    print("[DEBUG] Making Metadata")
     metadatas = [{"source": f"{i}-pl"} for i in range(len(texts))]
 
     # Create a Chroma vector store
-    embeddings = OpenAIEmbeddings()
+    print("[DEBUG] Running Embeddings")
+    embeddings = OpenAIEmbeddings(disallowed_special=())
     docsearch = await cl.make_async(Chroma.from_texts)(
         texts, embeddings, metadatas=metadatas
     )
 
     # Create a chain that uses the Chroma vector store
+    print("[DEBUG] Running chain. ")
     chain = RetrievalQAWithSourcesChain.from_chain_type(
         ChatOpenAI(temperature=0),
         chain_type="stuff",
         retriever=docsearch.as_retriever(),
     )
-    
 
     # Save the metadata and texts in the user session
+    print("[DEBUG] Saving metadata and texts. ")
     cl.user_session.set("metadatas", metadatas)
     cl.user_session.set("texts", texts)
 
     # Let the user know that the system is ready
+    print("[DEBUG] System ready. ")
     msg.content = f"Processing `{file.name}` done. You can now ask questions!"
     await msg.update()
 
@@ -117,15 +128,16 @@ async def on_chat_start():
 
 
 @cl.on_message
-async def main(message:str):
-
+async def main(message: str):
+    print("[DEBUG] Initial message DEBUG:", type(message))
     chain = cl.user_session.get("chain")  # type: RetrievalQAWithSourcesChain
     cb = cl.AsyncLangchainCallbackHandler(
         stream_final_answer=True, answer_prefix_tokens=["FINAL", "ANSWER"]
     )
     cb.answer_reached = True
-    res = await chain.acall(message, callbacks=[cb])
-
+    print("[DEBUG] Before passing to chain-type:", type(message))
+    res = await chain.invoke(message, callbacks=[cb])
+    print("[DEBUG] Passed to chain type:", type(message),type(res))
     answer = res["answer"]
     sources = res["sources"].strip()
     source_elements = []
